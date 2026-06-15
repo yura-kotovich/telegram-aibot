@@ -3,6 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiohttp import web
+from html import escape
 import os
 import asyncio
 import logging
@@ -21,9 +22,14 @@ ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
 
 user_states = {}
 
-WELCOME_TEXT = """Привіт! Я працюю з обмеженою кількістю клієнтів, щоб гарантувати результат.
-Перед нашою сесією прошу відповісти на 4 короткі питання. Це займе 1 хвилину, але дозволить мені підготувати конкретне рішення під ваш запит.
-Вартість консультації: 500 грн/год. 👇"""
+
+def get_welcome_text(first_name: str) -> str:
+    return f"""Привіт, {escape(first_name)}!
+
+Штучний інтелект може економити години роботи, а може заплутати ще більше. Моє завдання - допомогти вам впровадити ШІ без стресу та зайвих дій.
+
+Дайте мені 1 хвилину: дайте відповідь на 4 питання, і я безкоштовно проаналізую ваш запит, щоб запропонувати конкретне рішення під ваш бюджет і задачі."""
+
 
 QUESTION_1 = {
     "text": "Який напрямок ШІ вас цікавить найбільше?",
@@ -56,9 +62,9 @@ QUESTION_3 = {
 
 QUESTION_4_TEXT = "Опишіть ваше головне завдання або біль (опціонально).\n\n💡 Приклад: «Хочу автоматизувати звітність», «Cursor заплутався в коді», «Шукаю промпт»."
 
-FINAL_TEXT = """🎉 Дякую, заявку прийнято!
-Я вже вивчаю ваші відповіді. Зв'яжуся з вами в особистих повідомленнях протягом 2 годин, щоб узгодити час сесії.
-Якщо у вас терміновий запит, ви можете написати мені напряму: @yura_kotovich"""
+FINAL_TEXT = """🎉 Дякую, заявку прийнято! Я вже вивчаю ваші відповіді.
+
+Вартість індивідуального розбору вашого кейсу (созвон або текстове рішення з інструкціями) — 500 грн/год. Зв'яжуся з вами в особистих повідомленнях протягом 2 год."""
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -71,8 +77,12 @@ async def start_command(message: types.Message):
         "username": message.from_user.username or "Не вказано",
         "answers": {}
     }
-    await message.answer(WELCOME_TEXT)
-    await show_question_1(message)
+
+    first_name = message.from_user.first_name or "друже"
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="Почнемо? 👇", callback_data="start_quiz")]
+    ])
+    await message.answer(get_welcome_text(first_name), reply_markup=keyboard)
 
 
 async def show_question_1(message: types.Message):
@@ -114,7 +124,9 @@ async def handle_callback(callback: types.CallbackQuery):
     state = user_states[user_id]
     await callback.answer()
 
-    if data in [v for _, v in QUESTION_1["options"]]:
+    if data == "start_quiz":
+        await show_question_1(callback.message)
+    elif data in [v for _, v in QUESTION_1["options"]]:
         state["answers"]["напрямок_ШІ"] = data
         await show_question_2(callback.message)
     elif data in [v for _, v in QUESTION_2["options"]]:
@@ -162,7 +174,6 @@ async def send_application_to_admin(user_id):
         logging.error(f"Помилка відправки заявки: {e}")
 
 
-# --- Веб-сервер, щоб Render бачив відкритий порт і не вбивав сервіс ---
 async def health(request):
     return web.Response(text="Bot is running")
 
