@@ -1,15 +1,23 @@
-from aiogram import Bot, types
-from aiogram import Dispatcher, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiohttp import web
 import os
 import asyncio
 import logging
 
-# Логування для дебагу
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ADMIN_USERNAME = "yura_kotovich"  # без @
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+
+if not TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN не встановлено в Environment Variables на Render!")
+if not ADMIN_CHAT_ID:
+    raise ValueError("❌ ADMIN_CHAT_ID не встановлено в Environment Variables на Render!")
+
+ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
 
 user_states = {}
 
@@ -24,7 +32,7 @@ QUESTION_1 = {
         ("💻 AI для розробників (Cursor/Copilot)", "AI для розробників"),
         ("⚙️ Автоматизація та агенти (кастомні помічники)", "Автоматизація та агенти"),
         ("🖼️ Генерація контенту (Midjourney, Flux, відео)", "Генерація контенту"),
-        ("👤 В мене своє питання", "Своє питання")
+        ("👤 В мене своє питання", "Своє питання"),
     ]
 }
 
@@ -34,7 +42,7 @@ QUESTION_2 = {
         ("🌱 Новачок (хочу стартувати правильно)", "Новачок"),
         ("⚡ Практик (є результат, але хаотичний)", "Практик"),
         ("💼 Підприємець / Профі (шукаю автоматизацію)", "Підприємець/Профі"),
-        ("🗨 Не хочу вказувати", "Не хочу вказувати")
+        ("🗨 Не хочу вказувати", "Не хочу вказувати"),
     ]
 }
 
@@ -42,7 +50,7 @@ QUESTION_3 = {
     "text": "Який формат розбору вашого кейсу для вас найзручніший?",
     "options": [
         ("📲 Живий созвон…", "Живий созвон"),
-        ("📄 Текстовий розбір, інструкції, рішення", "Текстовий розбір")
+        ("📄 Текстовий розбір, інструкції, рішення", "Текстовий розбір"),
     ]
 }
 
@@ -52,16 +60,9 @@ FINAL_TEXT = """🎉 Дякую, заявку прийнято!
 Я вже вивчаю ваші відповіді. Зв'яжуся з вами в особистих повідомленнях протягом 2 годин, щоб узгодити час сесії.
 Якщо у вас терміновий запит, ви можете написати мені напряму: @yura_kotovich"""
 
-bot = Bot(token=TOKEN, parse_mode="HTML")
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-async def get_admin_chat_id():
-    try:
-        chat = await bot.get_chat(f"@{ADMIN_USERNAME}")
-        return chat.id
-    except Exception as e:
-        logging.error(f"Не вдалося отримати chat_id адміна: {e}")
-        return None
 
 @dp.message(CommandStart())
 async def start_command(message: types.Message):
@@ -73,12 +74,14 @@ async def start_command(message: types.Message):
     await message.answer(WELCOME_TEXT)
     await show_question_1(message)
 
+
 async def show_question_1(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text=text, callback_data=value)]
         for text, value in QUESTION_1["options"]
     ])
     await message.answer(QUESTION_1["text"], reply_markup=keyboard)
+
 
 async def show_question_2(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -87,6 +90,7 @@ async def show_question_2(message: types.Message):
     ])
     await message.answer(QUESTION_2["text"], reply_markup=keyboard)
 
+
 async def show_question_3(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text=text, callback_data=value)]
@@ -94,19 +98,20 @@ async def show_question_3(message: types.Message):
     ])
     await message.answer(QUESTION_3["text"], reply_markup=keyboard)
 
+
 async def show_question_4(message: types.Message):
     await message.answer(QUESTION_4_TEXT)
+
 
 @dp.callback_query()
 async def handle_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in user_states:
-        await callback.answer("Сесія застаріла, почніть з /start")
+        await callback.answer("Сесія застаріла, натисніть /start")
         return
 
     data = callback.data
     state = user_states[user_id]
-
     await callback.answer()
 
     if data in [v for _, v in QUESTION_1["options"]]:
@@ -119,6 +124,7 @@ async def handle_callback(callback: types.CallbackQuery):
         state["answers"]["формат"] = data
         await show_question_4(callback.message)
 
+
 @dp.message()
 async def handle_text_message(message: types.Message):
     user_id = message.from_user.id
@@ -127,45 +133,55 @@ async def handle_text_message(message: types.Message):
 
     state = user_states[user_id]["answers"]
 
-    if ("напрямок_ШІ" in state and 
-        "досвід" in state and 
-        "формат" in state and 
-        "завдання_біль" not in state):
-        
+    if ("напрямок_ШІ" in state and "досвід" in state and "формат" in state
+            and "завдання_біль" not in state):
         state["завдання_біль"] = message.text
         await message.answer(FINAL_TEXT)
         await send_application_to_admin(user_id)
         del user_states[user_id]
+
 
 async def send_application_to_admin(user_id):
     user_data = user_states.get(user_id)
     if not user_data:
         return
 
-    admin_chat_id = await get_admin_chat_id()
-    if not admin_chat_id:
-        logging.error("Не вдалося отримати chat_id адміна")
-        return
-
     answers = user_data["answers"]
-    application_text = f"""
-📋 <b>НОВА ЗАЯВКА НА КОНСУЛЬТАЦІЮ</b>
-
-👤 <b>Username:</b> @{user_data["username"]}
-
-1. Напрямок ШІ: {answers.get("напрямок_ШІ", "Не вказано")}
-2. Досвід: {answers.get("досвід", "Не вказано")}
-3. Формат: {answers.get("формат", "Не вказано")}
-4. Завдання/біль: {answers.get("завдання_біль", "Не вказано")}
-"""
+    application_text = (
+        f"📋 <b>НОВА ЗАЯВКА НА КОНСУЛЬТАЦІЮ</b>\n\n"
+        f"👤 <b>Username:</b> @{user_data['username']}\n\n"
+        f"1. Напрямок ШІ: {answers.get('напрямок_ШІ', 'Не вказано')}\n"
+        f"2. Досвід: {answers.get('досвід', 'Не вказано')}\n"
+        f"3. Формат: {answers.get('формат', 'Не вказано')}\n"
+        f"4. Завдання/біль: {answers.get('завдання_біль', 'Не вказано')}"
+    )
 
     try:
-        await bot.send_message(admin_chat_id, application_text)
+        await bot.send_message(ADMIN_CHAT_ID, application_text)
     except Exception as e:
         logging.error(f"Помилка відправки заявки: {e}")
 
+
+# --- Веб-сервер, щоб Render бачив відкритий порт і не вбивав сервіс ---
+async def health(request):
+    return web.Response(text="Bot is running")
+
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Веб-сервер запущено на порту {port}")
+
+
 async def main():
+    await start_web_server()
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
